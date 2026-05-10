@@ -41,6 +41,51 @@ pre-commit install
 See [EXPERIMENTS.md](./EXPERIMENTS.md#multi-document-question-answering) for
 instructions to run and evaluate models on the multi-document QA task.
 
+### Running modern vLLM/OpenAI-compatible models
+
+After starting a vLLM or SGLang server with an OpenAI-compatible API, set the
+model variables:
+
+``` sh
+export API_BASE=http://localhost:8000/v1
+export MODEL=<served-model-name>
+export TAG=<short-run-name>
+```
+
+Then run the QA sweep over the 10-, 20-, and 30-document settings:
+
+``` sh
+for total_docs in 10 20 30; do
+  mkdir -p "qa_predictions/${TAG}/${total_docs}_total_documents"
+
+  for input in qa_data/${total_docs}_total_documents/*.jsonl.gz; do
+    base=$(basename "$input" .jsonl.gz)
+
+    PYTHONPATH=src python -u scripts/get_qa_responses_from_openai_compatible.py \
+      --input-path "$input" \
+      --output-path "qa_predictions/${TAG}/${total_docs}_total_documents/${base}-${TAG}-predictions.jsonl.gz" \
+      --api-base "$API_BASE" \
+      --api-key EMPTY \
+      --model "$MODEL" \
+      --temperature 0 \
+      --max-new-tokens 64 \
+      --num-workers 8
+
+    PYTHONPATH=src python -u scripts/evaluate_qa_responses.py \
+      --input-path "qa_predictions/${TAG}/${total_docs}_total_documents/${base}-${TAG}-predictions.jsonl.gz" \
+      --output-path "qa_predictions/${TAG}/${total_docs}_total_documents/${base}-${TAG}-predictions-scored.jsonl.gz"
+  done
+done
+```
+
+Summarize the scored files:
+
+``` sh
+PYTHONPATH=src python -u scripts/summarize_scores.py \
+  "qa_predictions/${TAG}/**/*-scored.jsonl.gz" \
+  | tee "${TAG}-qa-summary.md"
+```
+
 ## Multi-Document Question Answering Data
 
 [`qa_data/`](./qa_data/) contains multi-document question answering data for the
