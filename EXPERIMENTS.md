@@ -4,6 +4,95 @@ Note: all of these experiments were run on one or more A100 GPUs with 80GB of
 VRAM. You may need to modify commands to fit your own computing environment
 (e.g., changing the batch size, the max memory per GPU, the number of GPUs, etc)
 
+## Modern OpenAI-compatible model servers
+
+For newer long-context models, prefer serving the model with vLLM or SGLang and
+using the OpenAI-compatible runners:
+
+* [`scripts/get_qa_responses_from_openai_compatible.py`](./scripts/get_qa_responses_from_openai_compatible.py)
+* [`scripts/get_kv_responses_from_openai_compatible.py`](./scripts/get_kv_responses_from_openai_compatible.py)
+
+This keeps the prompt construction and evaluation format identical to the
+original experiments, while avoiding one custom generation script per model
+architecture.
+
+Example model server:
+
+```
+CUDA_VISIBLE_DEVICES=0,1,2,3 vllm serve Qwen/Qwen3-Next-80B-A3B-Instruct \
+    --tensor-parallel-size 4 \
+    --max-model-len 32768 \
+    --gpu-memory-utilization 0.90 \
+    --port 8000
+```
+
+Example QA sweep:
+
+```
+for input in qa_data/30_total_documents/*.jsonl.gz; do
+    base=$(basename "$input" .jsonl.gz)
+    python -u ./scripts/get_qa_responses_from_openai_compatible.py \
+        --input-path "$input" \
+        --api-base http://localhost:8000/v1 \
+        --api-key EMPTY \
+        --model Qwen/Qwen3-Next-80B-A3B-Instruct \
+        --temperature 0 \
+        --max-new-tokens 64 \
+        --num-workers 8 \
+        --output-path "qa_predictions/30_total_documents/${base}-qwen3-next-predictions.jsonl.gz"
+
+    python -u ./scripts/evaluate_qa_responses.py \
+        --input-path "qa_predictions/30_total_documents/${base}-qwen3-next-predictions.jsonl.gz" \
+        --output-path "qa_predictions/30_total_documents/${base}-qwen3-next-predictions-scored.jsonl.gz"
+done
+```
+
+Example KV sweep:
+
+```
+for keys in 75 140 300; do
+    for gold_index in 0 $((keys / 4)) $((keys / 2)) $((3 * keys / 4)) $((keys - 1)); do
+        python -u ./scripts/get_kv_responses_from_openai_compatible.py \
+            --input-path "kv_retrieval_data/kv-retrieval-${keys}_keys.jsonl.gz" \
+            --gold-index "$gold_index" \
+            --api-base http://localhost:8000/v1 \
+            --api-key EMPTY \
+            --model Qwen/Qwen3-Next-80B-A3B-Instruct \
+            --temperature 0 \
+            --max-new-tokens 64 \
+            --num-workers 8 \
+            --output-path "kv_predictions/kv-${keys}_gold_${gold_index}-qwen3-next-predictions.jsonl.gz"
+
+        python -u ./scripts/evaluate_kv_responses.py \
+            --input-path "kv_predictions/kv-${keys}_gold_${gold_index}-qwen3-next-predictions.jsonl.gz" \
+            --output-path "kv_predictions/kv-${keys}_gold_${gold_index}-qwen3-next-predictions-scored.jsonl.gz"
+    done
+done
+```
+
+For modern 128K+ context windows, generate a larger synthetic KV set and run the
+same sweep over deeper positions:
+
+```
+python -u ./scripts/make_kv_retrieval_data.py \
+    --num-keys 1000 \
+    --num-examples 500 \
+    --output-path kv_retrieval_data/kv-retrieval-1000_keys.jsonl.gz
+```
+
+Summarize scored files:
+
+```
+python -u ./scripts/summarize_scores.py "qa_predictions/**/*-scored.jsonl.gz" "kv_predictions/**/*-scored.jsonl.gz"
+```
+
+Use `--endpoint completions` for raw-completion servers or models whose chat
+template is not available to the serving framework. Use `--extra-body-json` for
+server-specific request fields, for example
+`--extra-body-json '{"reasoning_effort":"none"}'`.
+Tune `--num-workers` for your serving stack and context length; start around
+4-8 on a 4xH100 server and increase only if GPU utilization is still low.
+
 ## mpt-30b-instruct
 
 To run `mpt-30b` and `mpt-30b-instruct` on multi-document question answering,

@@ -13,8 +13,11 @@ einops
 flash-attn==1.0.5
 triton-pre-mlir@git+https://github.com/vchiley/triton.git@triton_pre_mlir#subdirectory=python
 accelerate
-# For running LLaMA-2 locally
-vllm==v0.2.1.post1
+# For running the legacy LLaMA-2 script locally, the original experiments used:
+# vllm==v0.2.1.post1
+#
+# For modern models, serve the model in a separate environment with a current
+# vLLM/SGLang release and use the OpenAI-compatible runner scripts.
 
 # Checks style, syntax, and other useful errors.
 flake8==5.0.4
